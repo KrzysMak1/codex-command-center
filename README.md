@@ -1,73 +1,93 @@
-# Welcome to your Lovable project
+# Codex CLI – Panel Zarządzania
 
-## Project info
+Panel webowy do zarządzania środowiskiem **Codex CLI** uruchomionym w Dockerze.  
+Zbudowany w React + TypeScript + TailwindCSS z ciemną, terminalową estetyką.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+---
 
-## How can I edit this code?
+## ✨ Funkcjonalności
 
-There are several ways of editing your application.
+- **Autoryzacja** – logowanie tokenem API
+- **Sidebar projektów** – przełączanie między repozytoriami/workspace'ami
+- **Prompt input** – wysyłanie komend do Codex CLI (`/popraw`, `/refactor`, `/stwórz testy`)
+- **Historia promptów** – lista poprzednich zadań z ich statusami
+- **Logi terminala** – kolorowany podgląd stdout/stderr/warning z auto-scroll
+- **Status zadania** – pasek postępu z aktualnym krokiem (analiza → generowanie → testy → gotowe)
+- **Przyciski akcji** – Uruchom testy, Zapisz zmiany, Stwórz PR (z modalem potwierdzenia)
+- **Responsywny design** – działa na desktop i mobile
 
-**Use Lovable**
+## 🛠 Stack technologiczny
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+| Warstwa    | Technologie                                    |
+| ---------- | ---------------------------------------------- |
+| Frontend   | React 18, TypeScript, Vite                     |
+| Stylizacja | TailwindCSS, shadcn/ui                         |
+| State      | Zustand                                        |
+| Routing    | React Router v6                                |
+| Ikony      | Lucide React                                   |
 
-Changes made via Lovable will be committed automatically to this repo.
+## 🚀 Uruchomienie lokalne
 
-**Use your preferred IDE**
+```bash
+# 1. Sklonuj repozytorium
+git clone <URL_REPOZYTORIUM>
+cd <NAZWA_PROJEKTU>
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+# 2. Zainstaluj zależności
+npm install
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+# 3. Uruchom serwer deweloperski
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+Aplikacja będzie dostępna pod `http://localhost:5173`.
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## 📁 Struktura projektu
 
-**Use GitHub Codespaces**
+```
+src/
+├── components/
+│   ├── ActionButtons.tsx      # Przyciski akcji + modal potwierdzenia
+│   ├── LogsViewer.tsx         # Podgląd logów terminala
+│   ├── NavLink.tsx            # Link nawigacyjny
+│   ├── ProjectSidebar.tsx     # Sidebar z listą projektów
+│   ├── PromptHistory.tsx      # Historia wysłanych promptów
+│   ├── PromptInput.tsx        # Pole do wpisywania promptów
+│   ├── TaskStatusPanel.tsx    # Panel statusu zadania
+│   └── ui/                    # Komponenty shadcn/ui
+├── pages/
+│   ├── Index.tsx              # Strona główna (router auth)
+│   ├── LoginPage.tsx          # Ekran logowania
+│   ├── Dashboard.tsx          # Główny dashboard
+│   └── NotFound.tsx           # Strona 404
+├── store/
+│   └── useAppStore.ts         # Globalny store Zustand
+├── index.css                  # Zmienne CSS + design tokens
+└── App.tsx                    # Routing aplikacji
+```
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## 🔌 Integracja z backendem (planowana)
 
-## What technologies are used for this project?
+Panel jest przygotowany do komunikacji z API backendowym obsługującym Codex CLI w Dockerze:
 
-This project is built with:
+| Endpoint     | Metoda | Opis                                      |
+| ------------ | ------ | ----------------------------------------- |
+| `/prompt`    | POST   | Wysyła prompt do Codex CLI                |
+| `/status`    | GET    | Zwraca status aktualnego zadania          |
+| `/logs`      | GET    | Pobiera logi z kontenera                  |
+| `/run`       | POST   | Uruchamia komendę w kontenerze            |
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+Obecnie panel działa na danych mock (symulacja).
 
-## How can I deploy this project?
+## 🎨 Kolorowanie logów
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+| Typ       | Kolor   |
+| --------- | ------- |
+| `stdout`  | 🟢 Zielony |
+| `stderr`  | 🔴 Czerwony |
+| `warning` | 🟡 Żółty   |
+| `info`    | 🔵 Niebieski |
 
-## Can I connect a custom domain to my Lovable project?
+## 📄 Licencja
 
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+MIT
