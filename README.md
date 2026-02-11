@@ -1,93 +1,86 @@
-# Codex CLI – Panel Zarządzania
+# Codex Command Center
 
-Panel webowy do zarządzania środowiskiem **Codex CLI** uruchomionym w Dockerze.  
-Zbudowany w React + TypeScript + TailwindCSS z ciemną, terminalową estetyką.
+Docelowy flow:
+1. odpalasz kontener Ubuntu,
+2. klonujesz repo,
+3. uruchamiasz **jeden skrypt**,
+4. logujesz się do panelu (preferencyjnie przez **Codex CLI / konto ChatGPT**, alternatywnie API key),
+5. tworzysz projekt i wskazujesz katalog kodu do edycji przez Codex.
 
----
-
-## ✨ Funkcjonalności
-
-- **Autoryzacja** – logowanie tokenem API
-- **Sidebar projektów** – przełączanie między repozytoriami/workspace'ami
-- **Prompt input** – wysyłanie komend do Codex CLI (`/popraw`, `/refactor`, `/stwórz testy`)
-- **Historia promptów** – lista poprzednich zadań z ich statusami
-- **Logi terminala** – kolorowany podgląd stdout/stderr/warning z auto-scroll
-- **Status zadania** – pasek postępu z aktualnym krokiem (analiza → generowanie → testy → gotowe)
-- **Przyciski akcji** – Uruchom testy, Zapisz zmiany, Stwórz PR (z modalem potwierdzenia)
-- **Responsywny design** – działa na desktop i mobile
-
-## 🛠 Stack technologiczny
-
-| Warstwa    | Technologie                                    |
-| ---------- | ---------------------------------------------- |
-| Frontend   | React 18, TypeScript, Vite                     |
-| Stylizacja | TailwindCSS, shadcn/ui                         |
-| State      | Zustand                                        |
-| Routing    | React Router v6                                |
-| Ikony      | Lucide React                                   |
-
-## 🚀 Uruchomienie lokalne
+## One-command start
 
 ```bash
-# 1. Sklonuj repozytorium
-git clone <URL_REPOZYTORIUM>
-cd <NAZWA_PROJEKTU>
-
-# 2. Zainstaluj zależności
-npm install
-
-# 3. Uruchom serwer deweloperski
-npm run dev
+./run-panel.sh
 ```
 
-Aplikacja będzie dostępna pod `http://localhost:5173`.
+Skrypt automatycznie:
+- sprawdza Docker/Node/npm,
+- opcjonalnie wykrywa Codex CLI,
+- instaluje zależności,
+- robi kontrolny build,
+- uruchamia backend + frontend (`npm run dev:full`).
 
-## 📁 Struktura projektu
+Po starcie wejdź na: `http://localhost:5173`.
 
+## Logowanie: Codex CLI (zalecane) lub API key
+
+### A) Codex CLI (konto Codex / ChatGPT Plus/Pro)
+1. W terminalu uruchom:
+   ```bash
+   codex
+   ```
+2. Wybierz **Sign in with ChatGPT** i zakończ logowanie.
+3. W panelu wybierz tryb **Codex CLI** i kliknij logowanie — panel sam uruchomi proces CLI, otworzy stronę logowania i po wykryciu sesji automatycznie przeniesie Cię do dashboardu.
+
+Backend sprawdza lokalną sesję CLI przez `/api/auth/cli` oraz uruchamia flow przez `/api/auth/cli/start`.
+
+### B) API key
+Podajesz klucz `sk-...` z `https://platform.openai.com/api-keys`.
+Backend weryfikuje klucz przez `GET https://api.openai.com/v1/models` (`/api/auth/openai`).
+
+
+## Izolacja kodu vs pliki systemowe kontenera
+
+Przy tworzeniu workspace backend uruchamia kontener w trybie izolacji:
+- kod projektu: bind mount hosta do `${CODEX_CONTAINER_CODE_PATH:-/workspace/project}`
+- pliki systemowe/home narzędzi: osobny **named volume Docker** montowany do `${CODEX_CONTAINER_HOME_PATH:-/codex-home}`
+- filesystem obrazu: `--read-only` + `tmpfs` dla `/tmp` i `/run`
+
+Dzięki temu kod jest odseparowany od systemowych plików kontenera i stanu narzędzi.
+
+## Tworzenie projektu (katalog -> kontener)
+
+W sidebarze kliknij `+` i podaj:
+- nazwę projektu (opcjonalnie),
+- **Host: katalog kodu** (np. `/workspace/my-repo`),
+- **Kontener: ścieżka kodu** (np. `/workspace/project`),
+- **Kontener: ścieżka system/home** (np. `/codex-home`),
+- **Host: katalog systemowy (opcjonalnie)** — jeśli podasz, system kontenera będzie mapowany bind mountem; jeśli puste, backend użyje named volume,
+- image Dockera (domyślnie `ghcr.io/openai/codex-universal:latest`).
+
+Backend tworzy kontener:
+
+```bash
+docker run -d --name <generated-name> \
+  --read-only --tmpfs /tmp --tmpfs /run \
+  --mount type=bind,src=<path>,dst=/workspace/project \
+  --mount type=volume,src=<state-volume>,dst=/codex-home \
+  -e HOME=/codex-home -w /workspace/project <image> sh -lc 'tail -f /dev/null'
 ```
-src/
-├── components/
-│   ├── ActionButtons.tsx      # Przyciski akcji + modal potwierdzenia
-│   ├── LogsViewer.tsx         # Podgląd logów terminala
-│   ├── NavLink.tsx            # Link nawigacyjny
-│   ├── ProjectSidebar.tsx     # Sidebar z listą projektów
-│   ├── PromptHistory.tsx      # Historia wysłanych promptów
-│   ├── PromptInput.tsx        # Pole do wpisywania promptów
-│   ├── TaskStatusPanel.tsx    # Panel statusu zadania
-│   └── ui/                    # Komponenty shadcn/ui
-├── pages/
-│   ├── Index.tsx              # Strona główna (router auth)
-│   ├── LoginPage.tsx          # Ekran logowania
-│   ├── Dashboard.tsx          # Główny dashboard
-│   └── NotFound.tsx           # Strona 404
-├── store/
-│   └── useAppStore.ts         # Globalny store Zustand
-├── index.css                  # Zmienne CSS + design tokens
-└── App.tsx                    # Routing aplikacji
-```
 
-## 🔌 Integracja z backendem (planowana)
+Potem prompty i akcje panelu wykonują się przez `docker exec` w tym kontenerze.
 
-Panel jest przygotowany do komunikacji z API backendowym obsługującym Codex CLI w Dockerze:
+Dodatkowo w panelu masz przycisk **Wyślij kod ZIP** — wskazujesz archiwum `.zip`, a backend rozpakowuje je do katalogu projektu na hoście.
 
-| Endpoint     | Metoda | Opis                                      |
-| ------------ | ------ | ----------------------------------------- |
-| `/prompt`    | POST   | Wysyła prompt do Codex CLI                |
-| `/status`    | GET    | Zwraca status aktualnego zadania          |
-| `/logs`      | GET    | Pobiera logi z kontenera                  |
-| `/run`       | POST   | Uruchamia komendę w kontenerze            |
+## API
 
-Obecnie panel działa na danych mock (symulacja).
-
-## 🎨 Kolorowanie logów
-
-| Typ       | Kolor   |
-| --------- | ------- |
-| `stdout`  | 🟢 Zielony |
-| `stderr`  | 🔴 Czerwony |
-| `warning` | 🟡 Żółty   |
-| `info`    | 🔵 Niebieski |
-
-## 📄 Licencja
-
-MIT
+- `GET /api/health`
+- `GET /api/auth/cli`
+- `GET /api/auth/openai`
+- `POST /api/workspaces`
+- `GET /api/projects`
+- `GET /api/status?projectId=...`
+- `GET /api/logs?projectId=...`
+- `POST /api/prompt`
+- `POST /api/run`
+- `POST /api/upload-zip`
