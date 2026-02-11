@@ -1,56 +1,71 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useAppStore } from '@/store/useAppStore';
-import { Play, Save, GitPullRequest, AlertTriangle } from 'lucide-react';
+import { Play, Save, GitPullRequest, AlertTriangle, Upload } from 'lucide-react';
 
 const ActionButtons = () => {
-  const [confirmAction, setConfirmAction] = useState<{ label: string; action: () => void } | null>(null);
-  const { addLog, taskStatus } = useAppStore();
+  const [confirmAction, setConfirmAction] = useState<{ label: string; command: string } | null>(null);
+  const [loadingAction, setLoadingAction] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { runAction, uploadProjectZip, taskStatus } = useAppStore();
   const isRunning = taskStatus.status === 'running';
 
   const actions = [
-    {
-      label: 'Uruchom testy',
-      icon: Play,
-      onClick: () => {
-        addLog({ timestamp: new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), type: 'info', message: '> Running test suite...' });
-        setTimeout(() => addLog({ timestamp: new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), type: 'stdout', message: '✓ All tests passed (23/23)' }), 1500);
-      },
-    },
-    {
-      label: 'Zapisz zmiany',
-      icon: Save,
-      onClick: () => {
-        addLog({ timestamp: new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), type: 'info', message: '> Saving changes to workspace...' });
-        setTimeout(() => addLog({ timestamp: new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), type: 'stdout', message: '✓ Changes saved successfully' }), 800);
-      },
-    },
-    {
-      label: 'Stwórz PR',
-      icon: GitPullRequest,
-      onClick: () => {
-        addLog({ timestamp: new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), type: 'info', message: '> Creating pull request...' });
-        setTimeout(() => addLog({ timestamp: new Date().toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), type: 'stdout', message: '✓ Pull request #42 created' }), 1200);
-      },
-    },
+    { label: 'Uruchom testy', icon: Play, command: 'test' },
+    { label: 'Zapisz zmiany', icon: Save, command: 'save' },
+    { label: 'Stwórz PR', icon: GitPullRequest, command: 'create-pr' },
   ];
+
+  const executeAction = async () => {
+    if (!confirmAction) return;
+    setLoadingAction(confirmAction.label);
+    await runAction(confirmAction.command, confirmAction.label);
+    setLoadingAction(null);
+    setConfirmAction(null);
+  };
+
+  const onPickZip = () => fileInputRef.current?.click();
+
+  const onZipSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      event.target.value = '';
+      return;
+    }
+
+    setLoadingAction('Wgrywanie ZIP');
+    await uploadProjectZip(file);
+    setLoadingAction(null);
+    event.target.value = '';
+  };
 
   return (
     <>
       <div className="flex flex-wrap gap-2">
-        {actions.map(({ label, icon: Icon, onClick }) => (
+        {actions.map(({ label, icon: Icon, command }) => (
           <button
             key={label}
-            onClick={() => setConfirmAction({ label, action: onClick })}
-            disabled={isRunning}
-            className="flex items-center gap-2 rounded-lg border border-border bg-secondary px-4 py-2.5 font-mono text-xs font-medium text-secondary-foreground transition-all hover:bg-secondary/80 hover:border-primary/30 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+            onClick={() => setConfirmAction({ label, command })}
+            disabled={isRunning || Boolean(loadingAction)}
+            className="flex items-center gap-2 rounded-lg border border-border bg-secondary px-4 py-2.5 font-mono text-xs font-medium text-secondary-foreground transition-all hover:border-primary/30 hover:bg-secondary/80 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Icon className="h-3.5 w-3.5" />
             {label}
           </button>
         ))}
+
+        <button
+          onClick={onPickZip}
+          disabled={isRunning || Boolean(loadingAction)}
+          className="flex items-center gap-2 rounded-lg border border-border bg-secondary px-4 py-2.5 font-mono text-xs font-medium text-secondary-foreground transition-all hover:border-primary/30 hover:bg-secondary/80 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Upload className="h-3.5 w-3.5" />
+          {loadingAction === 'Wgrywanie ZIP' ? 'Wgrywanie ZIP...' : 'Wyślij kod ZIP'}
+        </button>
+
+        <input ref={fileInputRef} type="file" accept=".zip" className="hidden" onChange={onZipSelected} />
       </div>
 
-      {/* Confirmation modal */}
       {confirmAction && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm animate-fade-in">
           <div className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-2xl animate-fade-in">
@@ -69,15 +84,17 @@ const ActionButtons = () => {
             <div className="flex gap-2">
               <button
                 onClick={() => setConfirmAction(null)}
-                className="flex-1 rounded-lg border border-border bg-muted px-4 py-2.5 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
+                disabled={Boolean(loadingAction)}
+                className="flex-1 rounded-lg border border-border bg-muted px-4 py-2.5 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
               >
                 Anuluj
               </button>
               <button
-                onClick={() => { confirmAction.action(); setConfirmAction(null); }}
-                className="flex-1 rounded-lg bg-primary px-4 py-2.5 font-mono text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-95"
+                onClick={() => void executeAction()}
+                disabled={Boolean(loadingAction)}
+                className="flex-1 rounded-lg bg-primary px-4 py-2.5 font-mono text-xs font-semibold text-primary-foreground transition-all hover:brightness-110 active:scale-95 disabled:opacity-70"
               >
-                Potwierdź
+                {loadingAction ? 'Wysyłanie...' : 'Potwierdź'}
               </button>
             </div>
           </div>
