@@ -20,13 +20,18 @@ const Dashboard = () => {
   } = useAppStore();
 
   useEffect(() => {
+    void (async () => {
+      await refreshProjects();
+      await Promise.all([refreshStatus(), refreshLogs()]);
+    })();
+
     const interval = window.setInterval(() => {
       void refreshStatus();
       void refreshLogs();
     }, 4000);
 
     return () => window.clearInterval(interval);
-  }, [refreshLogs, refreshStatus]);
+  }, [refreshLogs, refreshProjects, refreshStatus]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">

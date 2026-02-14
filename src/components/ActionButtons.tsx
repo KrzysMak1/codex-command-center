@@ -1,26 +1,33 @@
 import { useRef, useState } from 'react';
 import { useAppStore } from '@/store/useAppStore';
-import { Play, Save, GitPullRequest, AlertTriangle, Upload } from 'lucide-react';
+import { Play, Save, GitPullRequest, AlertTriangle, Upload, Package, Download } from 'lucide-react';
 
 const ActionButtons = () => {
   const [confirmAction, setConfirmAction] = useState<{ label: string; command: string } | null>(null);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { runAction, uploadProjectZip, taskStatus } = useAppStore();
+  const { runAction, uploadProjectZip, downloadLatestJar, taskStatus } = useAppStore();
   const isRunning = taskStatus.status === 'running';
 
   const actions = [
     { label: 'Uruchom testy', icon: Play, command: 'test' },
     { label: 'Zapisz zmiany', icon: Save, command: 'save' },
     { label: 'Stwórz PR', icon: GitPullRequest, command: 'create-pr' },
+    { label: 'Zbuduj JAR (Java)', icon: Package, command: 'build-jar' },
   ];
 
   const executeAction = async () => {
     if (!confirmAction) return;
-    setLoadingAction(confirmAction.label);
-    await runAction(confirmAction.command, confirmAction.label);
-    setLoadingAction(null);
+
+    const action = confirmAction;
     setConfirmAction(null);
+    setLoadingAction(action.label);
+
+    try {
+      await runAction(action.command, action.label);
+    } finally {
+      setLoadingAction(null);
+    }
   };
 
   const onPickZip = () => fileInputRef.current?.click();
@@ -53,6 +60,16 @@ const ActionButtons = () => {
             {label}
           </button>
         ))}
+
+
+        <button
+          onClick={() => void downloadLatestJar()}
+          disabled={isRunning || Boolean(loadingAction)}
+          className="flex items-center gap-2 rounded-lg border border-border bg-secondary px-4 py-2.5 font-mono text-xs font-medium text-secondary-foreground transition-all hover:border-primary/30 hover:bg-secondary/80 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Download className="h-3.5 w-3.5" />
+          Pobierz ostatni JAR
+        </button>
 
         <button
           onClick={onPickZip}

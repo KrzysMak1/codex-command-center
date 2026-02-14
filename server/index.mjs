@@ -62,6 +62,124 @@ const sanitizeName = (name) =>
     .replace(/^-+|-+$/g, '')
     .slice(0, 40) || 'workspace';
 
+const PROJECT_LABEL_PREFIX = 'codex.command-center';
+
+const toProjectIdFromContainer = (containerId) => `docker-${containerId.slice(0, 12)}`;
+
+const inferProjectFromContainer = (container) => {
+  const labels = container?.Config?.Labels ?? {};
+  const mounts = Array.isArray(container?.Mounts) ? container.Mounts : [];
+  const containerName = String(container?.Name ?? '').replace(/^\//, '');
+
+  const labeledCodeMountPath = labels[`${PROJECT_LABEL_PREFIX}.code_mount_path`];
+  const codeMountPath = labeledCodeMountPath || mounts.find((mount) => mount?.Type === 'bind')?.Destination || CONTAINER_CODE_PATH;
+
+  const codeMount = mounts.find((mount) => mount?.Destination === codeMountPath)
+    ?? mounts.find((mount) => mount?.Type === 'bind');
+
+  if (!codeMount?.Source) {
+    return null;
+  }
+
+  const homePath = labels[`${PROJECT_LABEL_PREFIX}.home_path`] || CONTAINER_HOME_PATH;
+  const homeMount = mounts.find((mount) => mount?.Destination === homePath);
+
+  const projectName = labels[`${PROJECT_LABEL_PREFIX}.project_name`]
+    || containerName.replace(/^codex-/, '')
+    || path.basename(codeMount.Source)
+    || 'workspace';
+
+  return {
+    id: labels[`${PROJECT_LABEL_PREFIX}.project_id`] || toProjectIdFromContainer(container?.Id ?? ''),
+    name: projectName,
+    path: codeMount.Source,
+    containerName,
+    codeMountPath,
+    homePath,
+    systemVolumeName: homeMount?.Type === 'volume' ? homeMount?.Name : undefined,
+    systemHostPath: homeMount?.Type === 'bind' ? homeMount?.Source : undefined,
+    lastActive: 'odzyskany po restarcie',
+  };
+};
+
+const syncProjectsFromDocker = async () => {
+  try {
+    const { stdout } = await runCmd('docker', ['ps', '-a', '--filter', 'name=codex-', '--format', '{{.ID}}']);
+    const containerIds = stdout
+      .split('\n')
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    const discovered = new Map();
+
+    for (const containerId of containerIds) {
+      try {
+        const inspectResult = await runCmd('docker', ['inspect', containerId]);
+        const [container] = JSON.parse(inspectResult.stdout);
+        const project = inferProjectFromContainer(container);
+        if (!project) continue;
+
+        discovered.set(project.id, project);
+
+        if (!statusByProject.has(project.id)) {
+          statusByProject.set(project.id, { status: 'idle', progress: 0, currentStep: 'Kontener odzyskany po restarcie' });
+        }
+        if (!logsByProject.has(project.id)) {
+          logsByProject.set(project.id, [{
+            id: `recovered-${Date.now()}-${project.id}`,
+            timestamp: now(),
+            type: 'info',
+            message: `✓ Wykryto istniejący kontener: ${project.containerName}`,
+          }]);
+        }
+      } catch {
+        // pomijamy pojedynczy kontener, jeśli inspect się nie powiedzie
+      }
+    }
+
+    projects.clear();
+    discovered.forEach((project, id) => projects.set(id, project));
+  } catch {
+    // brak dockera lub błąd runtime - zostawiamy aktualny stan mapy projektów
+  }
+};
+
+
+const findLatestJarInProject = (projectPath) => {
+  const ignoredDirs = new Set(['.git', 'node_modules', '.gradle']);
+  const found = [];
+
+  const walk = (dir) => {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (ignoredDirs.has(entry.name)) continue;
+        walk(full);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith('.jar')) continue;
+      if (entry.name.endsWith('-sources.jar') || entry.name.endsWith('-javadoc.jar')) continue;
+      try {
+        const stat = fs.statSync(full);
+        found.push({ fullPath: full, mtimeMs: stat.mtimeMs, fileName: entry.name });
+      } catch {
+        // ignore file stat errors
+      }
+    }
+  };
+
+  walk(projectPath);
+  found.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return found[0];
+};
+
 const resolveProject = (projectId, projectPath) => {
   if (projectId && projects.has(projectId)) {
     return projects.get(projectId);
@@ -242,7 +360,8 @@ app.get('/api/auth/openai', requireAuth, async (req, res) => {
   }
 });
 
-app.get('/api/projects', requireAuth, (_, res) => {
+app.get('/api/projects', requireAuth, async (_, res) => {
+  await syncProjectsFromDocker();
   res.json([...projects.values()]);
 });
 
@@ -279,6 +398,18 @@ app.post('/api/workspaces', requireAuth, async (req, res) => {
       '-d',
       '--name',
       containerName,
+      '--label',
+      `${PROJECT_LABEL_PREFIX}.managed=true`,
+      '--label',
+      `${PROJECT_LABEL_PREFIX}.project_id=${projectId}`,
+      '--label',
+      `${PROJECT_LABEL_PREFIX}.project_name=${projectName}`,
+      '--label',
+      `${PROJECT_LABEL_PREFIX}.project_path=${resolvedHostPath}`,
+      '--label',
+      `${PROJECT_LABEL_PREFIX}.code_mount_path=${inputCodeMountPath}`,
+      '--label',
+      `${PROJECT_LABEL_PREFIX}.home_path=${inputHomePath}`,
       '--read-only',
       '--tmpfs',
       '/tmp',
@@ -424,6 +555,21 @@ app.post('/api/upload-zip', requireAuth, async (req, res) => {
   }
 });
 
+
+app.get('/api/artifacts/jar/download', requireAuth, (req, res) => {
+  const project = resolveProject(String(req.query.projectId ?? ''), undefined);
+  if (!project) {
+    return res.status(400).send('Najpierw wybierz aktywny projekt.');
+  }
+
+  const latestJar = findLatestJarInProject(project.path);
+  if (!latestJar) {
+    return res.status(404).send('Nie znaleziono pliku .jar. Najpierw uruchom build JAR.');
+  }
+
+  return res.download(latestJar.fullPath, latestJar.fileName);
+});
+
 app.post('/api/prompt', requireAuth, async (req, res) => {
   const prompt = String(req.body?.prompt ?? '').trim();
   const project = resolveProject(String(req.body?.projectId ?? ''), String(req.body?.projectPath ?? ''));
@@ -455,6 +601,7 @@ app.post('/api/run', requireAuth, async (req, res) => {
     test: 'npm test || bun test || echo "Brak testów"',
     save: 'git add -A && git commit -m "chore: save from panel" || true',
     'create-pr': 'git status --short',
+    'build-jar': 'if [ -f mvnw ] || [ -f pom.xml ]; then chmod +x mvnw 2>/dev/null || true; ./mvnw -q -DskipTests package || mvn -q -DskipTests package; elif [ -f gradlew ] || [ -f build.gradle ] || [ -f build.gradle.kts ]; then chmod +x gradlew 2>/dev/null || true; ./gradlew clean jar -x test || gradle clean jar -x test; else echo "Brak konfiguracji Java (pom.xml / build.gradle)."; fi',
   };
 
   const command = mappedCommands[inputCommand] ?? inputCommand;
