@@ -33,6 +33,18 @@ const log = (projectId, type, message) => {
   logsByProject.set(projectId, current.slice(-500));
 };
 
+const streamLines = ({ chunk, buffer, onLine }) => {
+  const merged = `${buffer}${chunk.toString()}`;
+  const normalized = merged.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = normalized.split('\n');
+  const rest = lines.pop() ?? '';
+  lines
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .forEach(onLine);
+  return rest;
+};
+
 const runCmd = (cmd, args) =>
   new Promise((resolve, reject) => {
     const proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -47,6 +59,66 @@ const runCmd = (cmd, args) =>
     });
     proc.on('error', reject);
     proc.on('close', (code) => {
+      if (code === 0) {
+        resolve({ stdout, stderr });
+      } else {
+        reject(new Error(stderr || `${cmd} exited with code ${code}`));
+      }
+    });
+  });
+
+const runCmdStreaming = ({ cmd, args, onStdoutLine, onStderrLine, onHeartbeat }) =>
+  new Promise((resolve, reject) => {
+    const proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let stdoutBuffer = '';
+    let stderrBuffer = '';
+    const startedAt = Date.now();
+
+    const heartbeat = setInterval(() => {
+      if (onHeartbeat) {
+        onHeartbeat(Math.floor((Date.now() - startedAt) / 1000));
+      }
+    }, 10000);
+
+    proc.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+      stdoutBuffer = streamLines({
+        chunk,
+        buffer: stdoutBuffer,
+        onLine: (line) => {
+          if (onStdoutLine) onStdoutLine(line);
+        },
+      });
+    });
+
+    proc.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+      stderrBuffer = streamLines({
+        chunk,
+        buffer: stderrBuffer,
+        onLine: (line) => {
+          if (onStderrLine) onStderrLine(line);
+        },
+      });
+    });
+
+    proc.on('error', (error) => {
+      clearInterval(heartbeat);
+      reject(error);
+    });
+
+    proc.on('close', (code) => {
+      clearInterval(heartbeat);
+
+      if (stdoutBuffer.trim() && onStdoutLine) {
+        onStdoutLine(stdoutBuffer.trimEnd());
+      }
+      if (stderrBuffer.trim() && onStderrLine) {
+        onStderrLine(stderrBuffer.trimEnd());
+      }
+
       if (code === 0) {
         resolve({ stdout, stderr });
       } else {
@@ -487,29 +559,35 @@ app.get('/api/logs', requireAuth, (req, res) => {
 });
 
 const executeInsideProject = async ({ project, command }) => {
+  const startedAt = Date.now();
   statusByProject.set(project.id, { status: 'running', progress: 20, currentStep: `Uruchamianie: ${command}` });
+  log(project.id, 'info', `▶ Start w kontenerze ${project.containerName}`);
   log(project.id, 'stdout', `> ${command}`);
 
   try {
-    const result = await runCmd('docker', ['exec', project.containerName, 'sh', '-lc', command]);
-    if (result.stdout.trim()) {
-      result.stdout
-        .split('\n')
-        .filter(Boolean)
-        .forEach((line) => log(project.id, 'stdout', line));
-    }
-    if (result.stderr.trim()) {
-      result.stderr
-        .split('\n')
-        .filter(Boolean)
-        .forEach((line) => log(project.id, 'warning', line));
-    }
+    await runCmdStreaming({
+      cmd: 'docker',
+      args: ['exec', project.containerName, 'sh', '-lc', command],
+      onStdoutLine: (line) => log(project.id, 'stdout', line),
+      onStderrLine: (line) => log(project.id, 'warning', line),
+      onHeartbeat: (elapsedSeconds) => {
+        if (elapsedSeconds < 10) return;
+        const progress = Math.min(95, 20 + Math.floor(elapsedSeconds / 6));
+        statusByProject.set(project.id, {
+          status: 'running',
+          progress,
+          currentStep: `W toku (${elapsedSeconds}s): ${command}`,
+        });
+      },
+    });
 
-    statusByProject.set(project.id, { status: 'completed', progress: 100, currentStep: 'Zakończono' });
-    log(project.id, 'info', '✓ Komenda zakończona');
+    const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+    statusByProject.set(project.id, { status: 'completed', progress: 100, currentStep: `Zakończono (${elapsedSeconds}s)` });
+    log(project.id, 'info', `✓ Komenda zakończona w ${elapsedSeconds}s`);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Błąd wykonania komendy';
-    statusByProject.set(project.id, { status: 'error', progress: 100, currentStep: message });
+    const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+    statusByProject.set(project.id, { status: 'error', progress: 100, currentStep: `Błąd po ${elapsedSeconds}s: ${message}` });
     log(project.id, 'stderr', `✗ ${message}`);
     throw error;
   }
@@ -601,7 +679,7 @@ app.post('/api/run', requireAuth, async (req, res) => {
     test: 'npm test || bun test || echo "Brak testów"',
     save: 'git add -A && git commit -m "chore: save from panel" || true',
     'create-pr': 'git status --short',
-    'build-jar': 'if [ -f mvnw ] || [ -f pom.xml ]; then chmod +x mvnw 2>/dev/null || true; ./mvnw -q -DskipTests package || mvn -q -DskipTests package; elif [ -f gradlew ] || [ -f build.gradle ] || [ -f build.gradle.kts ]; then chmod +x gradlew 2>/dev/null || true; ./gradlew clean jar -x test || gradle clean jar -x test; else echo "Brak konfiguracji Java (pom.xml / build.gradle)."; fi',
+    'build-jar': 'set -e; if [ -f pom.xml ]; then echo "[build-jar] Maven project detected"; if [ -f ./mvnw ]; then chmod +x ./mvnw 2>/dev/null || true; ./mvnw -B --no-transfer-progress -DskipTests package; elif command -v mvn >/dev/null 2>&1; then mvn -B --no-transfer-progress -DskipTests package; else echo "Brak mvnw/mvn dla projektu Maven."; exit 1; fi; elif [ -f build.gradle ] || [ -f build.gradle.kts ]; then echo "[build-jar] Gradle project detected"; if [ -f ./gradlew ]; then chmod +x ./gradlew 2>/dev/null || true; ./gradlew jar -x test --console=plain; elif command -v gradle >/dev/null 2>&1; then gradle jar -x test --console=plain; else echo "Brak gradlew/gradle dla projektu Gradle."; exit 1; fi; else echo "Brak konfiguracji Java (pom.xml / build.gradle)."; exit 1; fi',
   };
 
   const command = mappedCommands[inputCommand] ?? inputCommand;
