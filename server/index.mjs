@@ -127,6 +127,8 @@ const runCmdStreaming = ({ cmd, args, onStdoutLine, onStderrLine, onHeartbeat })
     });
   });
 
+const shellEscape = (value) => `'${String(value).replace(/'/g, `'"'"'`)}'`;
+
 const sanitizeName = (name) =>
   name
     .toLowerCase()
@@ -567,7 +569,7 @@ const executeInsideProject = async ({ project, command }) => {
   try {
     await runCmdStreaming({
       cmd: 'docker',
-      args: ['exec', project.containerName, 'sh', '-lc', command],
+      args: ['exec', project.containerName, 'sh', '-c', command],
       onStdoutLine: (line) => log(project.id, 'stdout', line),
       onStderrLine: (line) => log(project.id, 'warning', line),
       onHeartbeat: (elapsedSeconds) => {
@@ -659,8 +661,11 @@ app.post('/api/prompt', requireAuth, async (req, res) => {
     return res.status(400).send('Prompt jest wymagany');
   }
 
+  const escapedPrompt = shellEscape(prompt);
+  const codexPromptCommand = `if command -v codex >/dev/null 2>&1; then codex exec ${escapedPrompt}; else echo "Brak Codex CLI w kontenerze. Prompty wymagają polecenia codex."; exit 1; fi`;
+
   try {
-    await executeInsideProject({ project, command: prompt });
+    await executeInsideProject({ project, command: codexPromptCommand });
     return res.json({ taskId: `${Date.now()}` });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Prompt failed';
@@ -679,7 +684,7 @@ app.post('/api/run', requireAuth, async (req, res) => {
     test: 'npm test || bun test || echo "Brak testów"',
     save: 'git add -A && git commit -m "chore: save from panel" || true',
     'create-pr': 'git status --short',
-    'build-jar': 'set -e; if [ -f pom.xml ]; then echo "[build-jar] Maven project detected"; if [ -f ./mvnw ]; then chmod +x ./mvnw 2>/dev/null || true; ./mvnw -B --no-transfer-progress -DskipTests package; elif command -v mvn >/dev/null 2>&1; then mvn -B --no-transfer-progress -DskipTests package; else echo "Brak mvnw/mvn dla projektu Maven."; exit 1; fi; elif [ -f build.gradle ] || [ -f build.gradle.kts ]; then echo "[build-jar] Gradle project detected"; if [ -f ./gradlew ]; then chmod +x ./gradlew 2>/dev/null || true; ./gradlew jar -x test --console=plain; elif command -v gradle >/dev/null 2>&1; then gradle jar -x test --console=plain; else echo "Brak gradlew/gradle dla projektu Gradle."; exit 1; fi; else echo "Brak konfiguracji Java (pom.xml / build.gradle)."; exit 1; fi',
+    'build-jar': 'set -e; if [ -f pom.xml ]; then echo "[build-jar] Maven project detected"; if [ -f ./mvnw ]; then chmod +x ./mvnw 2>/dev/null || true; ./mvnw -q -T 1C -DskipTests package; elif command -v mvn >/dev/null 2>&1; then mvn -q -T 1C -DskipTests package; else echo "Brak mvnw/mvn dla projektu Maven."; exit 1; fi; elif [ -f build.gradle ] || [ -f build.gradle.kts ]; then echo "[build-jar] Gradle project detected"; if [ -f ./gradlew ]; then chmod +x ./gradlew 2>/dev/null || true; ./gradlew --daemon jar -x test --console=plain; elif command -v gradle >/dev/null 2>&1; then gradle --daemon jar -x test --console=plain; else echo "Brak gradlew/gradle dla projektu Gradle."; exit 1; fi; else echo "Brak konfiguracji Java (pom.xml / build.gradle)."; exit 1; fi',
   };
 
   const command = mappedCommands[inputCommand] ?? inputCommand;
