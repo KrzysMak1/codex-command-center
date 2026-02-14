@@ -47,6 +47,12 @@ export interface CliLoginStartResponse {
   message: string;
 }
 
+
+export interface DownloadedJar {
+  fileName: string;
+  blob: Blob;
+}
+
 export interface CliAuthStatus {
   codexInstalled: boolean;
   codexVersion?: string;
@@ -95,6 +101,25 @@ async function request<T>(config: ApiClientConfig, path: string, init?: RequestI
   return response.json() as Promise<T>;
 }
 
+
+const downloadJar = async (config: ApiClientConfig, projectId?: string): Promise<DownloadedJar> => {
+  const response = await fetch(`${normalizeUrl(config.baseUrl)}${withQuery('/artifacts/jar/download', { projectId })}`, {
+    method: 'GET',
+    headers: createHeaders(config, false),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(errorText || `Request failed with status ${response.status}`);
+  }
+
+  const contentDisposition = response.headers.get('content-disposition') ?? '';
+  const match = contentDisposition.match(/filename="?([^";]+)"?/i);
+  const fileName = match?.[1] ?? 'artifact.jar';
+
+  return { fileName, blob: await response.blob() };
+};
+
 export const api = {
   authenticateOpenAi: (config: ApiClientConfig) => request<{ ok: boolean }>(config, '/auth/openai'),
   checkCliAuth: (config: ApiClientConfig) => request<CliAuthStatus>(config, '/auth/cli'),
@@ -126,6 +151,7 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  downloadLatestJar: (config: ApiClientConfig, projectId?: string) => downloadJar(config, projectId),
   uploadProjectZip: (
     config: ApiClientConfig,
     payload: { projectId?: string; projectPath?: string; fileName: string; zipBase64: string },

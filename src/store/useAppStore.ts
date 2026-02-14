@@ -83,6 +83,7 @@ interface AppState {
   sendPrompt: (prompt: string) => Promise<void>;
   runAction: (command: string, label: string) => Promise<void>;
   uploadProjectZip: (file: File) => Promise<void>;
+  downloadLatestJar: () => Promise<void>;
   refreshStatus: () => Promise<void>;
   refreshLogs: () => Promise<void>;
   refreshProjects: () => Promise<void>;
@@ -278,6 +279,33 @@ export const useAppStore = create<AppState>()(
           const message = error instanceof Error ? error.message : 'Nie udało się wgrać ZIP-a';
           get().addLog({ timestamp: now(), type: 'stderr', message: `✗ Upload ZIP: ${message}` });
           set({ lastError: message });
+        }
+      },
+
+
+      downloadLatestJar: async () => {
+        const state = get();
+        const activeProject = state.activeProject;
+
+        if (!activeProject) {
+          get().addLog({ timestamp: now(), type: 'warning', message: '⚠ Najpierw wybierz projekt.' });
+          return;
+        }
+
+        try {
+          const result = await api.downloadLatestJar(getApiConfig(state), activeProject.id);
+          const url = URL.createObjectURL(result.blob);
+          const anchor = document.createElement('a');
+          anchor.href = url;
+          anchor.download = result.fileName;
+          document.body.appendChild(anchor);
+          anchor.click();
+          document.body.removeChild(anchor);
+          URL.revokeObjectURL(url);
+          get().addLog({ timestamp: now(), type: 'info', message: `✓ Pobrano JAR: ${result.fileName}` });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Nie udało się pobrać JAR';
+          get().addLog({ timestamp: now(), type: 'stderr', message: `✗ Pobieranie JAR: ${message}` });
         }
       },
 
