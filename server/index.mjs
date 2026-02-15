@@ -674,12 +674,25 @@ app.post('/api/prompt', requireAuth, async (req, res) => {
 
   const escapedPrompt = shellEscape(prompt);
   const codexPromptCommand = [
+    'if ! command -v codex >/dev/null 2>&1; then',
+    '  echo "Codex CLI nie znaleziony. Próba automatycznej instalacji...";',
+    '  if command -v npm >/dev/null 2>&1; then',
+    '    npm install -g @openai/codex;',
+    '  elif command -v pnpm >/dev/null 2>&1; then',
+    '    pnpm add -g @openai/codex;',
+    '  elif command -v bun >/dev/null 2>&1; then',
+    '    bun add -g @openai/codex;',
+    '  else',
+    '    echo "Brak npm/pnpm/bun — nie można automatycznie doinstalować Codex CLI.";',
+    '    exit 1;',
+    '  fi;',
+    'fi;',
     'if command -v codex >/dev/null 2>&1; then',
     `  codex exec ${escapedPrompt};`,
     'elif command -v npx >/dev/null 2>&1; then',
     `  npx -y @openai/codex exec ${escapedPrompt};`,
     'else',
-    '  echo "Brak Codex CLI w kontenerze. Zainstaluj `@openai/codex` lub użyj obrazu z Codex CLI.";',
+    '  echo "Instalacja Codex CLI zakończyła się niepowodzeniem.";',
     '  exit 1;',
     'fi',
   ].join(' ');
