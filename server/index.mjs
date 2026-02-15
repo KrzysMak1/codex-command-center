@@ -193,6 +193,15 @@ const syncProjectsFromDocker = async () => {
         const project = inferProjectFromContainer(container);
         if (!project) continue;
 
+        const isRunning = Boolean(container?.State?.Running);
+        if (!isRunning) {
+          try {
+            await runCmd('docker', ['start', containerId]);
+          } catch {
+            // kontener może być ręcznie usunięty w trakcie synchronizacji
+          }
+        }
+
         discovered.set(project.id, project);
 
         if (!statusByProject.has(project.id)) {
@@ -470,6 +479,8 @@ app.post('/api/workspaces', requireAuth, async (req, res) => {
     const runArgs = [
       'run',
       '-d',
+      '--restart',
+      'unless-stopped',
       '--name',
       containerName,
       '--label',
