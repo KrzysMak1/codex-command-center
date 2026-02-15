@@ -673,7 +673,16 @@ app.post('/api/prompt', requireAuth, async (req, res) => {
   }
 
   const escapedPrompt = shellEscape(prompt);
-  const codexPromptCommand = `if command -v codex >/dev/null 2>&1; then codex exec ${escapedPrompt}; else echo "Brak Codex CLI w kontenerze. Prompty wymagają polecenia codex."; exit 1; fi`;
+  const codexPromptCommand = [
+    'if command -v codex >/dev/null 2>&1; then',
+    `  codex exec ${escapedPrompt};`,
+    'elif command -v npx >/dev/null 2>&1; then',
+    `  npx -y @openai/codex exec ${escapedPrompt};`,
+    'else',
+    '  echo "Brak Codex CLI w kontenerze. Zainstaluj `@openai/codex` lub użyj obrazu z Codex CLI.";',
+    '  exit 1;',
+    'fi',
+  ].join(' ');
 
   try {
     await executeInsideProject({ project, command: codexPromptCommand });
